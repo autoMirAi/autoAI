@@ -8,15 +8,15 @@ use std::pin::Pin;
 pub struct OllamaClient {
     client: Client,
     base_url: String,
-    model: String,
+    model_name: String,
 }
 
 impl OllamaClient {
-    pub fn new(base_url: &str, model: &str) -> Self {
+    pub fn new(base_url: &str, model_name: &str) -> Self {
         Self {
             client: Client::new(),
             base_url: base_url.to_string(),
-            model: model.to_string(),
+            model_name: model_name.to_string(),
         }
     }
 
@@ -25,7 +25,7 @@ impl OllamaClient {
             .client
             .post(format!("{}/api/generate", self.base_url))
             .json(&json!({
-                "model": self.model,
+                "model": self.model_name,
                 "prompt": prompt,
                 "stream": true
             }))

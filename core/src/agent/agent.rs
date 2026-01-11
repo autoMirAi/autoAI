@@ -1,13 +1,14 @@
 use crate::llm::ollama::{OllamaClient, OllamaStream};
+use crate::config::OllamaConfig;
 
 pub struct Agent {
     ollama: OllamaClient,
 }
 
 impl Agent {
-    pub fn new() -> Self {
+    pub fn new(cfg: &OllamaConfig) -> Self {
         Self {
-            ollama: OllamaClient::new("http://localhost:11434", "llama3.1:8b"),
+            ollama: OllamaClient::new(&cfg.base_url, &cfg.model_name),
         }
     }
 
