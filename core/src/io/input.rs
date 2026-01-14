@@ -1,9 +1,10 @@
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tokio::io::{self, AsyncBufReadExt};
 
 #[async_trait]
 pub trait InputSource {
-    async fn next(&mut self) -> anyhow::Result<Option<String>>;
+    async fn next(&mut self) -> Result<Option<String>>;
 }
 
 pub struct StdinInput {
@@ -12,6 +13,7 @@ pub struct StdinInput {
 
 impl StdinInput {
     pub fn new() -> Self {
+        tracing::debug!("Initializing stdin input");
         Self {
             reader: io::BufReader::new(io::stdin()),
         }
@@ -20,13 +22,33 @@ impl StdinInput {
 
 #[async_trait]
 impl InputSource for StdinInput {
-    async fn next(&mut self) -> anyhow::Result<Option<String>> {
+    async fn next(&mut self) -> Result<Option<String>> {
         let mut line = String::new();
-        let n = self.reader.read_line(&mut line).await?;
+
+        let n = self
+            .reader
+            .read_line(&mut line)
+            .await
+            .context("Failed to read from stdin")?;
         if n == 0 {
+            tracing::debug!("Reached EOF");
             Ok(None)
         } else {
-            Ok(Some(line.trim().to_string()))
+            let trimmed = line.trim().to_string();
+
+            if trimmed.is_empty() {
+                tracing::trace!("Skipping empty line");
+                return self.next().await;
+            }
+
+            tracing::trace!("Read input: {} chars", trimmed.len());
+            Ok(Some(trimmed))
         }
+    }
+}
+
+impl Default for StdinInput {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -1,21 +1,44 @@
-use crate::llm::ollama::{OllamaClient, OllamaStream};
 use crate::config::OllamaConfig;
+use crate::llm::ollama::{OllamaClient, OllamaStream};
+use anyhow::{Context, Result};
 
 pub struct Agent {
     ollama: OllamaClient,
 }
 
 impl Agent {
-    pub fn new(cfg: &OllamaConfig) -> Self {
-        Self {
-            ollama: OllamaClient::new(&cfg.base_url, &cfg.model_name),
-        }
+    pub fn new(cfg: &OllamaConfig) -> Result<Self> {
+        tracing::info!("Initializing agent with model: {}", cfg.model_name);
+
+        let ollama = OllamaClient::new(
+            &cfg.base_url,
+            &cfg.model_name,
+            cfg.timeout_secs,
+            cfg.max_retries,
+        )
+        .context("Failed to create Ollama client")?;
+
+        Ok(Self { ollama })
     }
 
-    pub async fn handle_input(
-        &mut self,
-        text: String,
-    ) -> anyhow::Result<OllamaStream> {
-        self.ollama.chat_stream(text).await
+    pub async fn health_check(&self) -> Result<()> {
+        self.ollama.health_check().await
+    }
+
+    pub async fn handle_input(&mut self, text: String) -> Result<OllamaStream> {
+        if text.trim().is_empty() {
+            anyhow::bail!("Input cannot be empty");
+        }
+
+        if text.len() > 10000 {
+            anyhow::bail!("Input too long (max 10000 characters)");
+        }
+
+        tracing::info!("Processing input: {} chars", text.len());
+
+        self.ollama
+            .chat_stream_with_retry(text)
+            .await
+            .context("Failed ot get response from LLM")
     }
 }
