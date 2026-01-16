@@ -1,3 +1,7 @@
 # autoAI
 
- http://127.0.0.1:11434/api/generate
+```shell
+ollama run llama3.1:8b
+cargo run
+
+```
