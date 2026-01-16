@@ -1,6 +1,6 @@
 use crate::agent::agent::Agent;
+use crate::error::Result;
 use crate::io::{input::InputSource, output::OutputSink};
-use anyhow::{Context, Result};
 use futures_util::StreamExt;
 use tokio::signal;
 
@@ -18,7 +18,7 @@ pub async fn run(
     }
 
     output
-        .emit("Agent ready. Type your message and press enter. Ctrl+D or Ctrl+C to exit.")
+        .emit("🤖 Agent ready. Type your message and press Enter. Ctrl+D or Ctrl+C to exit.")
         .await?;
     output.emit("").await?;
 
@@ -32,7 +32,7 @@ pub async fn run(
     loop {
         tokio::select! {
             _ = &mut ctrl_c => {
-                output.emit("\nGoodbye!").await?;
+                output.emit("\n👋 Goodbye!").await?;
                 break;
             }
 
@@ -40,20 +40,19 @@ pub async fn run(
                 match result {
                     Ok(Some(text)) => {
                         if let Err(e) = process_input(&mut output, &mut agent, text).await {
-                            tracing::error!("Error processing input: {:#}", e);
-                            output.emit_error(&format!("{:#}", e)).await?;
+                            tracing::error!("Error processing input: {}", e);
+                            output.emit_error(&format!("{}", e)).await?;
                             output.emit("").await?;
                         }
                     }
                     Ok(None) => {
                         tracing::info!("Reached EOF");
-                        output.emit("\n Goodbye!").await?;
+                        output.emit("\n👋 Goodbye!").await?;
                         break;
                     }
                     Err(e) => {
-                        tracing::error!("Input error:: {:#}", e);
-                        output.emit_error(&format!("Input error: {:#}", e)).await?;
-
+                        tracing::error!("Input error: {}", e);
+                        output.emit_error(&format!("Input error: {}", e)).await?;
                         break;
                     }
                 }
@@ -74,15 +73,12 @@ async fn process_input(
     output.emit("").await?;
     output.emit("Assistant: ").await?;
 
-    let mut stream = agent
-        .handle_input(text)
-        .await
-        .context("Failed to get response stream")?;
+    let mut stream = agent.handle_input(text).await?;
 
     let mut total_chars = 0;
 
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result.context("Stream error")?;
+        let chunk = chunk_result?;
 
         if !chunk.text.is_empty() {
             output.emit_inline(&chunk.text).await?;

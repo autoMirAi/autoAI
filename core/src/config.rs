@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use crate::error::{AppError, Result};
 use serde::Deserialize;
 use std::path::Path;
 
@@ -9,14 +9,12 @@ pub struct OllamaConfig {
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
     #[serde(default = "default_max_retries")]
-    #[allow(dead_code)]
     pub max_retries: u32,
 }
 
 fn default_timeout() -> u64 {
     30
 }
-
 fn default_max_retries() -> u32 {
     3
 }
@@ -40,13 +38,13 @@ impl AppConfig {
             .add_source(config::File::from(path))
             .add_source(config::Environment::with_prefix("APP").separator("__"))
             .build()
-            .with_context(|| format!("Failed to build config from {}", path.display()))?;
+            .map_err(|e| AppError::Config(format!("Failed to build config: {}", e)))?;
 
         let cfg: AppConfig = cfg
             .try_deserialize()
-            .context("Failed to deserialize config")?;
+            .map_err(|e| AppError::Config(format!("Failed to deserialize: {}", e)))?;
 
-        cfg.validate().context("Config validation failed")?;
+        cfg.validate()?;
 
         tracing::info!("Configuration loaded successfully");
         Ok(cfg)
@@ -54,21 +52,25 @@ impl AppConfig {
 
     fn validate(&self) -> Result<()> {
         if self.ollama.base_url.is_empty() {
-            anyhow::bail!("ollama.base_url cannot be empty");
+            return Err(AppError::Config("base_url cannot be empty".to_string()));
         }
 
         if !self.ollama.base_url.starts_with("http://")
             && !self.ollama.base_url.starts_with("https://")
         {
-            anyhow::bail!("ollama.base_url must start with http:// or https://");
+            return Err(AppError::Config(
+                "base_url must start with http:// or https://".to_string(),
+            ));
         }
 
         if self.ollama.model_name.is_empty() {
-            anyhow::bail!("ollama.model_name cannot be empty");
+            return Err(AppError::Config("model_name cannot be empty".to_string()));
         }
 
         if self.ollama.timeout_secs == 0 {
-            anyhow::bail!("ollama.timeout_secs must be greater than 0");
+            return Err(AppError::Config(
+                "timeout_secs must be greater than 0".to_string(),
+            ));
         }
 
         Ok(())

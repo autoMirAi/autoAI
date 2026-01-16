@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use crate::error::{AppError, Result};
 use async_trait::async_trait;
 use tokio::io::{self, AsyncBufReadExt};
 
@@ -29,7 +29,8 @@ impl InputSource for StdinInput {
             .reader
             .read_line(&mut line)
             .await
-            .context("Failed to read from stdin")?;
+            .map_err(|e| AppError::Io(e))?;
+
         if n == 0 {
             tracing::debug!("Reached EOF");
             Ok(None)

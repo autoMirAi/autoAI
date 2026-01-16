@@ -1,6 +1,6 @@
 use crate::config::OllamaConfig;
+use crate::error::{AppError, Result};
 use crate::llm::ollama::{OllamaClient, OllamaStream};
-use anyhow::{Context, Result};
 
 pub struct Agent {
     ollama: OllamaClient,
@@ -15,8 +15,7 @@ impl Agent {
             &cfg.model_name,
             cfg.timeout_secs,
             cfg.max_retries,
-        )
-        .context("Failed to create Ollama client")?;
+        )?;
 
         Ok(Self { ollama })
     }
@@ -27,18 +26,17 @@ impl Agent {
 
     pub async fn handle_input(&mut self, text: String) -> Result<OllamaStream> {
         if text.trim().is_empty() {
-            anyhow::bail!("Input cannot be empty");
+            return Err(AppError::InvalidInput("Input cannot be empty".to_string()));
         }
 
         if text.len() > 10000 {
-            anyhow::bail!("Input too long (max 10000 characters)");
+            return Err(AppError::InvalidInput(
+                "Input too long (max 10000 characters)".to_string(),
+            ));
         }
 
         tracing::info!("Processing input: {} chars", text.len());
 
-        self.ollama
-            .chat_stream_with_retry(text)
-            .await
-            .context("Failed ot get response from LLM")
+        self.ollama.chat_stream_with_retry(text).await
     }
 }

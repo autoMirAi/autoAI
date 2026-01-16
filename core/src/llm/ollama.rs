@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use crate::error::{AppError, Result};
 use futures_util::Stream;
 use futures_util::StreamExt;
 use reqwest::Client;
@@ -38,17 +38,20 @@ impl OllamaClient {
         max_retries: u32,
     ) -> Result<Self> {
         if base_url.is_empty() {
-            bail!("base_url cannot be empty");
+            return Err(AppError::InvalidInput(
+                "base_url cannot be empty".to_string(),
+            ));
         }
-
         if model_name.is_empty() {
-            bail!("model_name cannot be empty");
+            return Err(AppError::InvalidInput(
+                "model_name cannot be empty".to_string(),
+            ));
         }
 
         let client = Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
             .build()
-            .context("Failed to create HTTP client")?;
+            .map_err(|e| AppError::Http(e))?;
 
         Ok(Self {
             client,
@@ -65,9 +68,9 @@ impl OllamaClient {
             .get(format!("{}/api/tags", self.base_url))
             .send()
             .await
-            .context("Failed to connect to Ollama")?
+            .map_err(|e| AppError::ServiceUnavailable(format!("Cannot connect: {}", e)))?
             .error_for_status()
-            .context("Ollama returned error status")?;
+            .map_err(|e| AppError::ServiceUnavailable(format!("Health check failed: {}", e)))?;
 
         tracing::info!("Ollama service is healthy");
         Ok(())
@@ -75,7 +78,7 @@ impl OllamaClient {
 
     pub async fn chat_stream(&self, prompt: String) -> Result<OllamaStream> {
         if prompt.trim().is_empty() {
-            bail!("Prompt cannot be empty");
+            return Err(AppError::InvalidInput("Prompt cannot be empty".to_string()));
         }
 
         tracing::debug!("Sending prompt to Ollama (length: {})", prompt.len());
@@ -93,16 +96,18 @@ impl OllamaClient {
             .json(&request)
             .send()
             .await
-            .with_context(|| format!("Failed to send request to {}", url))?
+            .map_err(|e| AppError::Http(e))?
             .error_for_status()
-            .context("Ollama API returned error")?;
+            .map_err(|e| AppError::Llm(format!("API error: {}", e)))?;
 
         let stream = resp.bytes_stream().map(|item| {
-            let bytes = item.context("Failed to read response chunk")?;
+            let bytes = item.map_err(|e| AppError::Http(e))?;
+
             let response: GenerateResponse =
-                serde_json::from_slice(&bytes).context("Failed to parse Ollama response")?;
+                serde_json::from_slice(&bytes).map_err(|e| AppError::Json(e))?;
+
             if let Some(error) = response.error {
-                bail!("Ollama error: {}", error);
+                return Err(AppError::Llm(error));
             }
 
             Ok(OllamaChunk {
@@ -138,8 +143,9 @@ impl OllamaClient {
             }
         }
 
-        Err(last_error.unwrap())
-            .with_context(|| format!("Failed after {} retries", self.max_retries))
+        Err(last_error.unwrap_or(AppError::RetryLimitExceeded {
+            attempts: self.max_retries,
+        }))
     }
 }
 

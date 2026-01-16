@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use crate::error::{AppError, Result};
 use async_trait::async_trait;
 use tokio::io::{self, AsyncWriteExt};
 
@@ -27,8 +27,8 @@ impl StdoutOutput {
             stdout
                 .write_all(&self.buffer)
                 .await
-                .context("Failed to write to stdout")?;
-            stdout.flush().await.context("Failed to flush stdout")?;
+                .map_err(|e| AppError::Io(e))?;
+            stdout.flush().await.map_err(|e| AppError::Io(e))?;
             self.buffer.clear();
         }
         Ok(())
@@ -58,16 +58,13 @@ impl OutputSink for StdoutOutput {
         stderr
             .write_all(b"Error: ")
             .await
-            .context("Failed to write to stderr")?;
+            .map_err(|e| AppError::Io(e))?;
         stderr
             .write_all(error.as_bytes())
             .await
-            .context("Failed to write to stderr")?;
-        stderr
-            .write_all(b"\n")
-            .await
-            .context("Failed to write to stderr")?;
-        stderr.flush().await.context("failed to flush stderr")?;
+            .map_err(|e| AppError::Io(e))?;
+        stderr.write_all(b"\n").await.map_err(|e| AppError::Io(e))?;
+        stderr.flush().await.map_err(|e| AppError::Io(e))?;
         Ok(())
     }
 }

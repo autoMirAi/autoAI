@@ -1,9 +1,9 @@
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Error, Debug)]
 pub enum AppError {
     #[error("Configuration error: {0}")]
-    Config(#[from] config::ConfigError),
+    Config(String),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -20,19 +20,28 @@ pub enum AppError {
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 
+    #[allow(dead_code)]
     #[error("Stream ended unexpectedly")]
     StreamEnded,
 
+    #[allow(dead_code)]
     #[error("Operation cancelled")]
     Cancelled,
 
-    #[error("Unknown error: {0}")]
-    Unknown(String),
+    #[error("Service unavailable: {0}")]
+    ServiceUnavailable(String),
+
+    #[allow(dead_code)]
+    #[error("Timeout after {0} seconds")]
+    Timeout(u64),
+
+    #[error("Retry limit exceeded: {attempts} attempts")]
+    RetryLimitExceeded { attempts: u32 },
 }
 
-impl From<anyhow::Error> for AppError {
-    fn from(err: anyhow::Error) -> Self {
-        AppError::Unknown(err.to_string())
+impl From<config::ConfigError> for AppError {
+    fn from(err: config::ConfigError) -> Self {
+        AppError::Config(err.to_string())
     }
 }
 
