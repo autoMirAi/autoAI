@@ -14,17 +14,14 @@ async fn main() -> Result<()> {
     tracing::info!("Starting AI Chat application");
 
     let cfg = config::AppConfig::load()?;
-
     tracing::debug!("Configuration: {:#?}", cfg);
 
-    let input = io::input::StdinInput::new();
-    let output = io::output::StdoutOutput::new();
+    let input = io::TextInput::new();
+    let output = io::TextOutput::new();
 
-    let agent = agent::agent::Agent::new(&cfg.ollama)?;
+    let agent = agent::Agent::new(&cfg.ollama)?;
 
-    let result = agent::runtime::run(input, output, agent).await;
-
-    match result {
+    match agent::run(input, output, agent).await {
         Ok(_) => {
             tracing::info!("Application exited normally");
             Ok(())
@@ -38,7 +35,8 @@ async fn main() -> Result<()> {
 }
 
 fn init_logging() -> Result<()> {
-    let env_filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info,core=debug".to_string());
+    let default_filter = "info,core=debug";
+    let env_filter = std::env::var("RUST_LOG").unwrap_or_else(|_| default_filter.to_string());
 
     tracing_subscriber::registry()
         .with(

@@ -1,9 +1,9 @@
 use crate::config::OllamaConfig;
 use crate::error::{AppError, Result};
-use crate::llm::ollama::{OllamaClient, OllamaStream};
+use crate::llm::{LlmProvider, OllamaClient, ResponseStream};
 
 pub struct Agent {
-    ollama: OllamaClient,
+    llm: Box<dyn LlmProvider>,
 }
 
 impl Agent {
@@ -17,26 +17,37 @@ impl Agent {
             cfg.max_retries,
         )?;
 
-        Ok(Self { ollama })
+        Ok(Self::with_provider(Box::new(ollama)))
+    }
+
+    pub fn with_provider(llm: Box<dyn LlmProvider>) -> Self {
+        Self { llm }
     }
 
     pub async fn health_check(&self) -> Result<()> {
-        self.ollama.health_check().await
+        self.llm.health_check().await
     }
 
-    pub async fn handle_input(&mut self, text: String) -> Result<OllamaStream> {
-        if text.trim().is_empty() {
-            return Err(AppError::InvalidInput("Input cannot be empty".to_string()));
-        }
-
-        if text.len() > 10000 {
-            return Err(AppError::InvalidInput(
-                "Input too long (max 10000 characters)".to_string(),
-            ));
-        }
-
+    pub async fn process(&self, text: &str) -> Result<ResponseStream> {
+        self.validate_input(text)?;
         tracing::info!("Processing input: {} chars", text.len());
+        self.llm.chat(text).await
+    }
 
-        self.ollama.chat_stream_with_retry(text).await
+    fn validate_input(&self, text: &str) -> Result<()> {
+        const MAX_INPUT_LENGTH: usize = 10000;
+
+        if text.trim().is_empty() {
+            return Err(AppError::invalid_input("Input cannot be empty"));
+        }
+
+        if text.len() > MAX_INPUT_LENGTH {
+            return Err(AppError::invalid_input(format!(
+                "Input too long (max {} characters)",
+                MAX_INPUT_LENGTH
+            )));
+        }
+
+        Ok(())
     }
 }

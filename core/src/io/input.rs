@@ -1,17 +1,17 @@
-use crate::error::{AppError, Result};
+use crate::error::Result;
 use async_trait::async_trait;
 use tokio::io::{self, AsyncBufReadExt};
 
 #[async_trait]
-pub trait InputSource {
+pub trait InputSource: Send {
     async fn next(&mut self) -> Result<Option<String>>;
 }
 
-pub struct StdinInput {
+pub struct TextInput {
     reader: io::BufReader<io::Stdin>,
 }
 
-impl StdinInput {
+impl TextInput {
     pub fn new() -> Self {
         tracing::debug!("Initializing stdin input");
         Self {
@@ -21,34 +21,30 @@ impl StdinInput {
 }
 
 #[async_trait]
-impl InputSource for StdinInput {
+impl InputSource for TextInput {
     async fn next(&mut self) -> Result<Option<String>> {
         let mut line = String::new();
 
-        let n = self
-            .reader
-            .read_line(&mut line)
-            .await
-            .map_err(|e| AppError::Io(e))?;
+        let byte_read = self.reader.read_line(&mut line).await?;
 
-        if n == 0 {
+        if byte_read == 0 {
             tracing::debug!("Reached EOF");
-            Ok(None)
-        } else {
-            let trimmed = line.trim().to_string();
-
-            if trimmed.is_empty() {
-                tracing::trace!("Skipping empty line");
-                return self.next().await;
-            }
-
-            tracing::trace!("Read input: {} chars", trimmed.len());
-            Ok(Some(trimmed))
+            return Ok(None);
         }
+
+        let trimmed = line.trim().to_string();
+
+        if trimmed.is_empty() {
+            tracing::trace!("Skipping empty line");
+            return self.next().await;
+        }
+
+        tracing::trace!("Read input: {} chars", trimmed.len());
+        Ok(Some(trimmed))
     }
 }
 
-impl Default for StdinInput {
+impl Default for TextInput {
     fn default() -> Self {
         Self::new()
     }

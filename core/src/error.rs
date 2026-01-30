@@ -8,35 +8,63 @@ pub enum AppError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("Input error: {0}")]
+    Input(String),
+
+    #[error("Output error: {0}")]
+    Output(String),
+
     #[error("HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
-
-    #[error("JSON parsing error: {0}")]
-    Json(#[from] serde_json::Error),
-
-    #[error("LLM error: {0}")]
-    Llm(String),
-
-    #[error("Invalid input: {0}")]
-    InvalidInput(String),
-
-    #[allow(dead_code)]
-    #[error("Stream ended unexpectedly")]
-    StreamEnded,
-
-    #[allow(dead_code)]
-    #[error("Operation cancelled")]
-    Cancelled,
 
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
 
-    #[allow(dead_code)]
-    #[error("Timeout after {0} seconds")]
-    Timeout(u64),
+    #[error("Timeout after {seconds} seconds")]
+    Timeout { seconds: u64 },
+
+    #[error("JSON parsing error: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("LLM error: {0}")]
+    Llm(String),
+
+    #[error("Stream ended unexpectedly")]
+    StreamEnded,
 
     #[error("Retry limit exceeded: {attempts} attempts")]
-    RetryLimitExceeded { attempts: u32 },
+    RetryExhausted { attempts: u32 },
+
+    #[error("Operation cancelled")]
+    Cancelled,
+}
+
+impl AppError {
+    pub fn config(msg: impl Into<String>) -> Self {
+        Self::Config(msg.into())
+    }
+
+    pub fn llm(msg: impl Into<String>) -> Self {
+        Self::Llm(msg.into())
+    }
+
+    pub fn invalid_input(msg: impl Into<String>) -> Self {
+        Self::InvalidInput(msg.into())
+    }
+
+    pub fn service_unvailable(msg: impl Into<String>) -> Self {
+        Self::ServiceUnavailable(msg.into())
+    }
+
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Http(_) | Self::Timeout { .. } | Self::ServiceUnavailable(_)
+        )
+    }
 }
 
 impl From<config::ConfigError> for AppError {
