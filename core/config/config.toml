@@ -3,3 +3,11 @@ base_url = "http://localhost:11434"
 model_name = "llama3.1:8b"
 timeout_secs = 30
 max_retries = 3
+
+# https://huggingface.co/ggerganov/whisper.cpp/tree/main
+[voice]
+model_path = "model/ggml-medium.bin"
+language = "auto"
+silence_threshold_secs = 1.5
+max_duration_secs = 30.0
+translate = false

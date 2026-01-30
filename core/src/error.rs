@@ -14,6 +14,15 @@ pub enum AppError {
     #[error("Output error: {0}")]
     Output(String),
 
+    #[error("Audio error: {0}")]
+    Audio(String),
+
+    #[error("Speech recognition error: {0]")]
+    SpeechRecognition(String),
+
+    #[error("No audio device found")]
+    NoAudioDevice,
+
     #[error("HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
 
@@ -57,6 +66,10 @@ impl AppError {
 
     pub fn service_unvailable(msg: impl Into<String>) -> Self {
         Self::ServiceUnavailable(msg.into())
+    }
+
+    pub fn audio(msg: impl Into<String>) -> Self {
+        Self::Audio(msg.into())
     }
 
     pub fn is_retryable(&self) -> bool {

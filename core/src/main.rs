@@ -16,11 +16,25 @@ async fn main() -> Result<()> {
     let cfg = config::AppConfig::load()?;
     tracing::debug!("Configuration: {:#?}", cfg);
 
-    let input = io::TextInput::new();
     let output = io::TextOutput::new();
-
     let agent = agent::Agent::new(&cfg.ollama)?;
 
+    if let Some(ref voice_ref) = cfg.voice {
+        tracing::info!("voic mode start!");
+        let input = io::VoiceInput::new(voice_cfg)?;
+        run_with_input(input, output, agent).await
+    } else {
+        tracing::info!("text mode start!");
+        let input = io::TextInput::new();
+        run_with_input(input, output, agent).await
+    }
+}
+
+async fn run_with_input(
+    input: impl io::InputSource,
+    output: impl io::OutputSink,
+    agent: agent::Agent,
+) -> Result<()> {
     match agent::run(input, output, agent).await {
         Ok(_) => {
             tracing::info!("Application exited normally");
