@@ -3,9 +3,7 @@ use crate::error::{AppError, Result};
 use crate::io::InputSource;
 use async_trait::async_trait;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, SampleFormat, SampleRate, Stream, StreamConfig};
-use tracing::trace;
-use std::result;
+use cpal::{Device, SampleRate, Stream, StreamConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -37,14 +35,23 @@ impl VoiceInput {
 
         let (device, device_sample_rate) = Self::init_audio_device()?;
 
-        Ok(Self { whisper_ctx, device, config: config.clone(), device_sample_rate, stop_signal: Arc::new(AtomicBool::new(false)), })
+        Ok(Self {
+            whisper_ctx,
+            device,
+            config: config.clone(),
+            device_sample_rate,
+            stop_signal: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     fn init_whisper(model_path: &str) -> Result<WhisperContext> {
         tracing::debug!("loading Whisper model: {}", model_path);
 
         if !std::path::Path::new(model_path).exists() {
-            return Err(AppError::SpeechRecognition(format!("model is not exist: {}", model_path)));
+            return Err(AppError::SpeechRecognition(format!(
+                "model is not exist: {}",
+                model_path
+            )));
         }
 
         let ctx_params = WhisperContextParameters::default();
@@ -59,13 +66,21 @@ impl VoiceInput {
     fn init_audio_device() -> Result<(Device, u32)> {
         let host = cpal::default_host();
         let device = host.default_input_device().ok_or(AppError::NoAudioDevice)?;
-        let device_name = device.name().unwrap_or_else(|_| "unknown device".to_string());
+        let device_name = device
+            .name()
+            .unwrap_or_else(|_| "unknown device".to_string());
         tracing::info!("using audio devie: {}", device_name);
 
-        let supported_config = device.default_input_config().map_err(|e| AppError::audio(format!("get audio config failed: {}", e)))?;
+        let supported_config = device
+            .default_input_config()
+            .map_err(|e| AppError::audio(format!("get audio config failed: {}", e)))?;
 
         let sample_rate = supported_config.sample_rate().0;
-        tracing::debug!("sample rate: {} Hz, format: {:?}". sample_rate, supported_config.sample_format());
+        tracing::debug!(
+            "sample rate: {} Hz, format: {:?}",
+            sample_rate,
+            supported_config.sample_format()
+        );
 
         Ok((device, sample_rate))
     }
@@ -84,14 +99,17 @@ impl VoiceInput {
 
         let stream = self.build_audio_stream(&stream_config, tx.clone())?;
 
-        stream.play().map_err(|e| AppError::audio(format!("start recorading failed: {}", e)))?;
+        stream
+            .play()
+            .map_err(|e| AppError::audio(format!("start recorading failed: {}", e)))?;
 
         tracing::info!("start recording, please say something...");
 
-        let mut audio_buffer = vec::new();
+        let mut audio_buffer = Vec::new();
         let mut state = VoiceState::WaitingForVoice;
 
-        let silence_threshold_sample = (self.config.silience_threshold_secs * device_sample_rate as f32) as usize;
+        let silence_threshold_sample =
+            (self.config.silience_threshold_secs * device_sample_rate as f32) as usize;
         let max_samples = (self.config.max_duration_secs * device_sample_rate as f32) as usize;
 
         const ENERGY_THRESHOLD: f32 = 0.01;
@@ -106,9 +124,9 @@ impl VoiceInput {
             let has_voice = energy > ENERGY_THRESHOLD;
 
             state = match state {
-                VoideState::WaitingForVoice => {
+                VoiceState::WaitingForVoice => {
                     if has_voice {
-                        tracing::debug!("detect voice, engry: {:.4}", energry);
+                        tracing::debug!("detect voice, energry: {:.4}", energy);
                         audio_buffer.extend_from_slice(&chunk);
                         VoiceState::Recording
                     } else {
@@ -120,7 +138,7 @@ impl VoiceInput {
 
                     if !has_voice {
                         VoiceState::SilenceDetected {
-                            silence_sample: chunk.len(), 
+                            silence_sample: chunk.len(),
                         }
                     } else {
                         VoiceState::Recording
@@ -138,13 +156,13 @@ impl VoiceInput {
                             break;
                         }
                         VoiceState::SilenceDetected {
-                            silence_sample: new_silence, 
+                            silence_sample: new_silence,
                         }
                     }
                 }
             };
-            
-            if sudio_buffer.len() >= max_samples {
+
+            if audio_buffer.len() >= max_samples {
                 tracing::warn!("reach max recording time");
                 break;
             }
@@ -170,18 +188,24 @@ impl VoiceInput {
     ) -> Result<Stream> {
         let err_fn = |err| tracing::error!("audio stream error: {}", err);
 
-        let stream = self.device.build_input_stream(config,
-            move |date: &[f32], _: &cpal::InputCallbackInfo| {
-                let _ = tx.try_send(data.to_vec());
-            },
-             error_fn, None).map_err(|e| AppError::audio(format!("create audio stram failed: {}", e)))?;
-        
+        let stream = self
+            .device
+            .build_input_stream(
+                config,
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    let _ = tx.try_send(data.to_vec());
+                },
+                err_fn,
+                None,
+            )
+            .map_err(|e| AppError::audio(format!("create audio stram failed: {}", e)))?;
+
         Ok(stream)
     }
 
     fn calculate_energy(samples: &[f32]) -> f32 {
         if samples.is_empty() {
-            return 0.0
+            return 0.0;
         }
 
         let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
@@ -213,8 +237,8 @@ impl VoiceInput {
                 let mut padded = chunk.to_vec();
                 padded.resize(input_frames, 0.0);
                 let result = resampler
-                .process(&[padded], None)
-                .map_err(|e| AppError::audio(format!("resample failed: {}", e)))?;
+                    .process(&[padded], None)
+                    .map_err(|e| AppError::audio(format!("resample failed: {}", e)))?;
 
                 output.extend_from_slice(&result[0]);
             } else {
@@ -228,13 +252,20 @@ impl VoiceInput {
         let expected_len = (audio.len() as f64 * resample_ratio) as usize;
         output.truncate(expected_len);
 
-        tracing::debug!("resampled successed: {} -> {} sample point", audio.len(), output.len());
+        tracing::debug!(
+            "resampled successed: {} -> {} sample point",
+            audio.len(),
+            output.len()
+        );
 
         Ok(output)
     }
 
-    fn transcrine(&self, audio: &[f32]) -> Result<String> {
-        tracing::debug!("start voice transcrining, audio len: {} points", audio.len());
+    fn transcribe(&self, audio: &[f32]) -> Result<String> {
+        tracing::debug!(
+            "start voice transcrining, audio len: {} points",
+            audio.len()
+        );
 
         let mut state = self.whisper_ctx.create_state().map_err(|e| {
             AppError::speech_recognition(format!("create Whisper status failed: {}", e))
@@ -256,6 +287,10 @@ impl VoiceInput {
             AppError::speech_recognition(format!("get transcribe result failed: {}", e))
         })?;
 
+        let num_segments = state.full_n_segments().map_err(|e| {
+            AppError::speech_recognition(format!("get segments count failed: {}", e))
+        })?;
+
         let mut result = String::new();
         for i in 0..num_segments {
             if let Ok(segment) = state.full_get_segment_text(i) {
@@ -275,7 +310,7 @@ impl VoiceInput {
 }
 
 #[async_trait]
-impl InputSource for VoiceConfig {
+impl InputSource for VoiceInput {
     async fn next(&mut self) -> Result<Option<String>> {
         self.stop_signal.store(false, Ordering::Relaxed);
 

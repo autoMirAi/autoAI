@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
 
     if let Some(ref voice_ref) = cfg.voice {
         tracing::info!("voic mode start!");
-        let input = io::VoiceInput::new(voice_cfg)?;
+        let input = io::VoiceInput::new(voice_ref)?;
         run_with_input(input, output, agent).await
     } else {
         tracing::info!("text mode start!");

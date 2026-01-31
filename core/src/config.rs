@@ -36,7 +36,7 @@ fn default_language() -> String {
     "auto".to_string()
 }
 
-fn default_silience_threshold() ->f32 {
+fn default_silience_threshold() -> f32 {
     1.5
 }
 
@@ -111,13 +111,13 @@ impl AppConfig {
             ));
         }
 
-        if let Some(ref voice) = self.void {
+        if let Some(ref voice) = self.voice {
             if voice.model_path.is_empty() {
                 return Err(AppError::Config(
                     "voice.model_path cannot be empty".to_string(),
                 ));
             }
-            if voice.silence_threshold_secs <= 0.0 {
+            if voice.silience_threshold_secs <= 0.0 {
                 return Err(AppError::Config(
                     "voice.silence_threshold_secs must be positive".to_string(),
                 ));

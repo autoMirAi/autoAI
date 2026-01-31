@@ -17,7 +17,7 @@ pub enum AppError {
     #[error("Audio error: {0}")]
     Audio(String),
 
-    #[error("Speech recognition error: {0]")]
+    #[error("Speech recognition error: {0}")]
     SpeechRecognition(String),
 
     #[error("No audio device found")]
@@ -70,6 +70,10 @@ impl AppError {
 
     pub fn audio(msg: impl Into<String>) -> Self {
         Self::Audio(msg.into())
+    }
+
+    pub fn speech_recognition(msg: impl Into<String>) -> Self {
+        Self::SpeechRecognition(msg.into())
     }
 
     pub fn is_retryable(&self) -> bool {
