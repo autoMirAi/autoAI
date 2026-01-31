@@ -3,10 +3,9 @@ use crate::error::{AppError, Result};
 use crate::io::InputSource;
 use async_trait::async_trait;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, SampleRate, Stream, StreamConfig};
+use cpal::{Device, SampleRate, StreamConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 const WHISPER_SAMPLE_RATE: u32 = 16000;
@@ -86,121 +85,118 @@ impl VoiceInput {
     }
 
     async fn record_audio(&self) -> Result<Vec<f32>> {
-        let (tx, mut rx) = mpsc::channel::<Vec<f32>>(64);
         let stop_signal = self.stop_signal.clone();
-
-        let stream_config = StreamConfig {
-            channels: 1,
-            sample_rate: SampleRate(self.device_sample_rate),
-            buffer_size: cpal::BufferSize::Default,
-        };
-
         let device_sample_rate = self.device_sample_rate;
-
-        let stream = self.build_audio_stream(&stream_config, tx.clone())?;
-
-        stream
-            .play()
-            .map_err(|e| AppError::audio(format!("start recorading failed: {}", e)))?;
-
-        tracing::info!("start recording, please say something...");
-
-        let mut audio_buffer = Vec::new();
-        let mut state = VoiceState::WaitingForVoice;
-
-        let silence_threshold_sample =
-            (self.config.silience_threshold_secs * device_sample_rate as f32) as usize;
-        let max_samples = (self.config.max_duration_secs * device_sample_rate as f32) as usize;
-
-        const ENERGY_THRESHOLD: f32 = 0.01;
-
-        while let Some(chunk) = rx.recv().await {
-            if stop_signal.load(Ordering::Relaxed) {
-                tracing::debug!("recv the stop signal");
-                break;
-            }
-
-            let energy = Self::calculate_energy(&chunk);
-            let has_voice = energy > ENERGY_THRESHOLD;
-
-            state = match state {
-                VoiceState::WaitingForVoice => {
-                    if has_voice {
-                        tracing::debug!("detect voice, energry: {:.4}", energy);
-                        audio_buffer.extend_from_slice(&chunk);
-                        VoiceState::Recording
-                    } else {
-                        VoiceState::WaitingForVoice
-                    }
-                }
-                VoiceState::Recording => {
-                    audio_buffer.extend_from_slice(&chunk);
-
-                    if !has_voice {
-                        VoiceState::SilenceDetected {
-                            silence_sample: chunk.len(),
-                        }
-                    } else {
-                        VoiceState::Recording
-                    }
-                }
-                VoiceState::SilenceDetected { silence_sample } => {
-                    audio_buffer.extend_from_slice(&chunk);
-
-                    if has_voice {
-                        VoiceState::Recording
-                    } else {
-                        let new_silence = silence_sample + chunk.len();
-                        if new_silence >= silence_threshold_sample {
-                            tracing::debug!("detect voice stopped, silence {} sample", new_silence);
-                            break;
-                        }
-                        VoiceState::SilenceDetected {
-                            silence_sample: new_silence,
-                        }
-                    }
-                }
+        let silence_threshold_secs = self.config.silience_threshold_secs;
+        let max_duration_secs = self.config.max_duration_secs;
+        // 在阻塞任务中获取设备并录音，因为 cpal::Stream 不是 Send
+        let device_name = self.device.name().unwrap_or_else(|_| "unknown".to_string());
+        let audio_buffer = tokio::task::spawn_blocking(move || -> Result<Vec<f32>> {
+            // 在阻塞线程中重新获取设备
+            let host = cpal::default_host();
+            let device = host
+                .input_devices()
+                .map_err(|e| AppError::audio(format!("get input devices failed: {}", e)))?
+                .find(|d| d.name().map(|n| n == device_name).unwrap_or(false))
+                .or_else(|| host.default_input_device())
+                .ok_or(AppError::NoAudioDevice)?;
+            let stream_config = StreamConfig {
+                channels: 1,
+                sample_rate: SampleRate(device_sample_rate),
+                buffer_size: cpal::BufferSize::Default,
             };
-
-            if audio_buffer.len() >= max_samples {
-                tracing::warn!("reach max recording time");
-                break;
+            // 使用标准库的 mpsc，因为在同步代码中
+            let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
+            let err_fn = |err| tracing::error!("audio stream error: {}", err);
+            let stream = device
+                .build_input_stream(
+                    &stream_config,
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        let _ = tx.send(data.to_vec());
+                    },
+                    err_fn,
+                    None,
+                )
+                .map_err(|e| AppError::audio(format!("create audio stream failed: {}", e)))?;
+            stream
+                .play()
+                .map_err(|e| AppError::audio(format!("start recording failed: {}", e)))?;
+            tracing::info!("start recording, please say something...");
+            let mut audio_buffer: Vec<f32> = Vec::new();
+            let mut state = VoiceState::WaitingForVoice;
+            let silence_threshold_sample =
+                (silence_threshold_secs * device_sample_rate as f32) as usize;
+            let max_samples = (max_duration_secs * device_sample_rate as f32) as usize;
+            const ENERGY_THRESHOLD: f32 = 0.01;
+            // 使用超时接收，这样可以检查 stop_signal
+            let timeout = std::time::Duration::from_millis(100);
+            loop {
+                if stop_signal.load(Ordering::Relaxed) {
+                    tracing::debug!("recv the stop signal");
+                    break;
+                }
+                let chunk = match rx.recv_timeout(timeout) {
+                    Ok(chunk) => chunk,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                };
+                let energy = Self::calculate_energy(&chunk);
+                let has_voice = energy > ENERGY_THRESHOLD;
+                state = match state {
+                    VoiceState::WaitingForVoice => {
+                        if has_voice {
+                            tracing::debug!("detect voice, energy: {:.4}", energy);
+                            audio_buffer.extend_from_slice(&chunk);
+                            VoiceState::Recording
+                        } else {
+                            VoiceState::WaitingForVoice
+                        }
+                    }
+                    VoiceState::Recording => {
+                        audio_buffer.extend_from_slice(&chunk);
+                        if !has_voice {
+                            VoiceState::SilenceDetected {
+                                silence_sample: chunk.len(),
+                            }
+                        } else {
+                            VoiceState::Recording
+                        }
+                    }
+                    VoiceState::SilenceDetected { silence_sample } => {
+                        audio_buffer.extend_from_slice(&chunk);
+                        if has_voice {
+                            VoiceState::Recording
+                        } else {
+                            let new_silence = silence_sample + chunk.len();
+                            if new_silence >= silence_threshold_sample {
+                                tracing::debug!(
+                                    "detect voice stopped, silence {} samples",
+                                    new_silence
+                                );
+                                break;
+                            }
+                            VoiceState::SilenceDetected {
+                                silence_sample: new_silence,
+                            }
+                        }
+                    }
+                };
+                if audio_buffer.len() >= max_samples {
+                    tracing::warn!("reach max recording time");
+                    break;
+                }
             }
-        }
-
-        drop(stream);
-
-        if audio_buffer.is_empty() {
-            return Err(AppError::audio("no audio signal"));
-        }
-
-        tracing::debug!("recording successed!, sample point {}", audio_buffer.len());
-
+            drop(stream);
+            if audio_buffer.is_empty() {
+                return Err(AppError::audio("no audio signal"));
+            }
+            tracing::debug!("recording succeeded! sample points: {}", audio_buffer.len());
+            Ok(audio_buffer)
+        })
+        .await
+        .map_err(|e| AppError::audio(format!("recording task failed: {}", e)))??;
         let resampled = self.resample_audio(&audio_buffer)?;
-
         Ok(resampled)
-    }
-
-    fn build_audio_stream(
-        &self,
-        config: &StreamConfig,
-        tx: mpsc::Sender<Vec<f32>>,
-    ) -> Result<Stream> {
-        let err_fn = |err| tracing::error!("audio stream error: {}", err);
-
-        let stream = self
-            .device
-            .build_input_stream(
-                config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let _ = tx.try_send(data.to_vec());
-                },
-                err_fn,
-                None,
-            )
-            .map_err(|e| AppError::audio(format!("create audio stram failed: {}", e)))?;
-
-        Ok(stream)
     }
 
     fn calculate_energy(samples: &[f32]) -> f32 {
